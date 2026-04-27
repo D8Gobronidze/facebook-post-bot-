@@ -92,8 +92,7 @@ def generate_content(event_name, status):
 def build_image_url(image_prompt):
     """Generate a free image via Pollinations.ai — no API key needed."""
     encoded = urllib.parse.quote(image_prompt)
-    # 1080x1080 is ideal for Instagram square posts
-    return f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1080&nologo=true&model=flux&enhance=true"
+    return f"https://image.pollinations.ai/prompt/{encoded}?width=1440&height=1440&nologo=true&model=flux&enhance=true"
 
 
 def build_facebook_post(title, caption, hashtags):
@@ -154,7 +153,26 @@ def post_to_instagram(caption, image_url):
     creation_id = container_resp.json().get("id")
     print(f"Instagram: media container created (id: {creation_id})")
 
-    # Step 2: publish the container
+    # Step 2: wait until Instagram finishes processing the image
+    status_url = f"https://graph.facebook.com/v19.0/{creation_id}"
+    for attempt in range(12):
+        status_resp = requests.get(
+            status_url,
+            params={"fields": "status_code", "access_token": IG_ACCESS_TOKEN},
+            timeout=10,
+        )
+        status_resp.raise_for_status()
+        status_code = status_resp.json().get("status_code")
+        print(f"Instagram container status: {status_code}")
+        if status_code == "FINISHED":
+            break
+        if status_code == "ERROR":
+            raise RuntimeError(f"Instagram container failed to process: {status_resp.json()}")
+        time.sleep(5)
+    else:
+        raise TimeoutError("Instagram container was not ready after 60s")
+
+    # Step 3: publish the container
     publish_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media_publish"
     publish_resp = requests.post(
         publish_url,
