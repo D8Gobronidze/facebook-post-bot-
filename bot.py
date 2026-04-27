@@ -29,18 +29,13 @@ SHEET_CSV_URL = (
 )
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOGO_DARK_PATH = os.path.join(_BASE_DIR, "logo_dark.png")   # dark logo → light backgrounds
-LOGO_WHITE_PATH = os.path.join(_BASE_DIR, "logo_white.png")  # white logo → dark backgrounds
+LOGO_DARK_PATH = os.path.join(_BASE_DIR, "logo_dark.png")
+LOGO_WHITE_PATH = os.path.join(_BASE_DIR, "logo_white.png")
 
-# Set to a non-empty string to override the AI-generated image prompt for testing.
-# Clear this back to "" once you are happy with the model output.
-TEST_IMAGE_PROMPT = (
-    "A high-contrast cinematic portrait of an anthropomorphic Golden Eagle warrior. "
-    "The creature has a realistic eagle head with sharp golden eyes and a curved beak, "
-    "transitioning into a muscular human torso wearing traditional Georgian Chokha armor. "
-    "Massive feathered wings emerge from the back. Intricate plumage textures, sharp focus, "
-    "8k resolution, stylized for apparel design, deep shadows."
-)
+for _p in (LOGO_DARK_PATH, LOGO_WHITE_PATH):
+    print(f"Logo file {'FOUND' if os.path.exists(_p) else 'MISSING'}: {_p}")
+
+TEST_IMAGE_PROMPT = ""  # set to a prompt string to override Groq for testing
 
 STYLE_VARIANTS = [
     "professional DSLR photography, golden hour, shallow depth of field, bokeh background",
@@ -198,35 +193,32 @@ def fetch_image_url(event_name, image_prompt):
     enriched = _enrich_prompt(image_prompt)
     print(f"Enriched prompt: {enriched}")
 
-    # 1. Hugging Face RealVisXL V4.0 (SDXL — better anatomy and creature assembly than FLUX)
+    # 1. Hugging Face FLUX.1-dev
     if HF_TOKEN and IMGBB_API_KEY:
         try:
-            print("Generating image with HF RealVisXL V4.0...")
+            print("Generating image with HF FLUX.1-dev...")
             hf_resp = requests.post(
-                "https://api-inference.huggingface.co/models/SG161222/RealVisXL_V4.0",
+                "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev",
                 headers={"Authorization": f"Bearer {HF_TOKEN}"},
                 json={
                     "inputs": enriched,
                     "parameters": {
-                        "negative_prompt": (
-                            "blurry, distorted, deformed, bad anatomy, fused limbs, "
-                            "extra fingers, duplicate, low quality, watermark, text, logo"
-                        ),
                         "width": 1024,
                         "height": 1024,
-                        "num_inference_steps": 30,
-                        "guidance_scale": 6.0,
+                        "num_inference_steps": 28,
+                        "guidance_scale": 3.5,
                         "seed": random.randint(0, 2**32 - 1),
                     },
                 },
                 timeout=180,
             )
+            print(f"HF response status: {hf_resp.status_code}, content-type: {hf_resp.headers.get('Content-Type')}")
             hf_resp.raise_for_status()
             url = _process_and_host(hf_resp.content)
-            print(f"HF RealVisXL image with logo hosted at: {url}")
+            print(f"HF FLUX.1-dev image with logo hosted at: {url}")
             return url
         except Exception as e:
-            print(f"HF RealVisXL error: {e} — trying Pexels")
+            print(f"HF FLUX.1-dev error: {e} — trying Pexels")
 
     # 2. Pexels
     if PEXELS_API_KEY:
