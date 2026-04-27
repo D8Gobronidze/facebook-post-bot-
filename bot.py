@@ -227,26 +227,25 @@ def _host_image(image_bytes):
     return url
 
 
-def _process_and_host(image_bytes):
-    """Apply logo overlay then upload to a public host. Returns hosted URL."""
+def _apply_logo(image_bytes):
+    """Apply logo overlay and return processed bytes."""
     try:
         processed = _overlay_logo(image_bytes)
         print("Logo overlay applied successfully.")
+        return processed
     except Exception as e:
-        print(f"WARNING: Logo overlay failed ({e}) — uploading image without logo.")
-        processed = image_bytes
-    return _host_image(processed)
+        print(f"WARNING: Logo overlay failed ({e}) — proceeding without logo.")
+        return image_bytes
 
 
-def fetch_image_url(event_name, image_prompt):
-    """Return a public image URL with logo overlaid.
-    Priority: HF FLUX.1-schnell (AI-generated) → Pexels (photo) → Pollinations (fallback).
-    Logo is always applied — hosted via imgbb or 0x0.st.
+def fetch_image_bytes(event_name, image_prompt):
+    """Return image bytes with logo overlaid.
+    Priority: HF FLUX.1-schnell → Pexels → Pollinations.
     """
     enriched = _enrich_prompt(image_prompt)
     print(f"Enriched prompt: {enriched}")
 
-    # 1. Hugging Face FLUX.1-schnell via InferenceClient (handles routing automatically)
+    # 1. Hugging Face FLUX.1-schnell
     if HF_TOKEN:
         try:
             print("Generating image with HF FLUX.1-schnell...")
@@ -261,7 +260,7 @@ def fetch_image_url(event_name, image_prompt):
             buf = io.BytesIO()
             pil_img.save(buf, format="JPEG", quality=92)
             print("HF FLUX.1-schnell generation successful.")
-            return _process_and_host(buf.getvalue())
+            return _apply_logo(buf.getvalue())
         except Exception as e:
             print(f"HF FLUX.1-schnell error: {e} — trying Pexels")
 
@@ -279,21 +278,18 @@ def fetch_image_url(event_name, image_prompt):
             if photos:
                 img_resp = requests.get(photos[0]["src"]["large2x"], timeout=30)
                 img_resp.raise_for_status()
-                return _process_and_host(img_resp.content)
+                return _apply_logo(img_resp.content)
             print("Pexels: no results, falling back to Pollinations")
         except Exception as e:
             print(f"Pexels error: {e} — falling back to Pollinations")
 
-    # 3. Pollinations fallback
+    # 3. Pollinations
     encoded = urllib.parse.quote(enriched)
     poll_url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true&model=flux&seed={random.randint(0, 99999)}"
-    try:
-        img_resp = requests.get(poll_url, timeout=120)
-        img_resp.raise_for_status()
-        return _process_and_host(img_resp.content)
-    except Exception as e:
-        print(f"Pollinations error: {e} — using direct URL (no logo)")
-    return poll_url
+    print(f"Fetching Pollinations image...")
+    img_resp = requests.get(poll_url, timeout=120)
+    img_resp.raise_for_status()
+    return _apply_logo(img_resp.content)
 
 
 def build_facebook_post(title, caption, hashtags):
@@ -304,15 +300,33 @@ def build_instagram_caption(title, caption, hashtags):
     return f"{title}\n\n{caption}\n\n{hashtags}"
 
 
-def post_to_facebook(message, image_url):
+def post_to_facebook(message, image_bytes):
+    """Upload image binary directly to Facebook. Returns API result including photo id."""
     url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/photos"
     response = requests.post(
         url,
-        data={"url": image_url, "caption": message, "access_token": FB_PAGE_TOKEN},
-        timeout=30,
+        data={"caption": message, "access_token": FB_PAGE_TOKEN},
+        files={"source": ("image.jpg", image_bytes, "image/jpeg")},
+        timeout=60,
     )
+    if not response.ok:
+        print(f"Facebook error {response.status_code}: {response.text}")
     response.raise_for_status()
     return response.json()
+
+
+def get_facebook_photo_url(photo_id):
+    """Return the highest-resolution Facebook CDN URL for a photo id."""
+    resp = requests.get(
+        f"https://graph.facebook.com/v19.0/{photo_id}",
+        params={"fields": "images", "access_token": FB_PAGE_TOKEN},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    images = resp.json().get("images", [])
+    if images:
+        return images[0]["source"]
+    return None
 
 
 def ensure_image_ready(image_url, retries=3, delay=10):
@@ -420,15 +434,20 @@ def main():
         print(f"Hashtags: {hashtags}")
         print(f"Image prompt: {image_prompt}")
 
-        image_url = fetch_image_url(event_name, image_prompt)
-        print(f"Image URL: {image_url}")
+        image_bytes = fetch_image_bytes(event_name, image_prompt)
 
         fb_text = build_facebook_post(title, caption, hashtags)
-        fb_result = post_to_facebook(fb_text, image_url)
-        print(f"Facebook: posted successfully. Post ID: {fb_result.get('id')}")
+        fb_result = post_to_facebook(fb_text, image_bytes)
+        photo_id = fb_result.get("id")
+        print(f"Facebook: posted successfully. Photo ID: {photo_id}")
 
         if IG_USER_ID:
             ig_caption = build_instagram_caption(title, caption, hashtags)
+            image_url = get_facebook_photo_url(photo_id)
+            if not image_url:
+                print("Could not get Facebook photo URL — falling back to hosted image.")
+                image_url = _host_image(image_bytes)
+            print(f"Instagram image URL: {image_url}")
             ig_result = post_to_instagram(ig_caption, image_url)
             print(f"Instagram: posted successfully. Post ID: {ig_result.get('id')}")
         else:
