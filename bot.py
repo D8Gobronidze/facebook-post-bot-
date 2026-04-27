@@ -1,5 +1,6 @@
 import os
 import csv
+import base64
 import requests
 from datetime import datetime
 from groq import Groq
@@ -15,6 +16,8 @@ FB_PAGE_ID = "706511265884553"
 IG_USER_ID = os.environ.get("INSTAGRAM_USER_ID", "")
 IG_ACCESS_TOKEN = os.environ.get("INSTAGRAM_ACCESS_TOKEN", FB_PAGE_TOKEN)
 PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "")
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
+IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY", "")
 
 SHEET_CSV_URL = (
     "https://docs.google.com/spreadsheets/d/"
@@ -90,8 +93,40 @@ def generate_content(event_name, status):
     return json.loads(raw)
 
 
+def _upload_to_imgbb(image_bytes):
+    """Upload raw image bytes to imgbb and return the public URL."""
+    resp = requests.post(
+        "https://api.imgbb.com/1/upload",
+        params={"key": IMGBB_API_KEY},
+        data={"image": base64.b64encode(image_bytes).decode("utf-8")},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()["data"]["url"]
+
+
 def fetch_image_url(event_name, image_prompt):
-    """Return a high-quality image URL. Uses Pexels if API key is set, else Pollinations."""
+    """Return a high-quality image URL.
+    Priority: HF FLUX.1 (1024px AI) → Pexels (1880px photo) → Pollinations (fallback).
+    """
+    # 1. Hugging Face FLUX.1-schnell — free, 1024x1024 AI-generated
+    if HF_TOKEN and IMGBB_API_KEY:
+        try:
+            print("Generating image with HF FLUX.1-schnell...")
+            hf_resp = requests.post(
+                "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
+                headers={"Authorization": f"Bearer {HF_TOKEN}"},
+                json={"inputs": image_prompt, "parameters": {"width": 1024, "height": 1024, "num_inference_steps": 4}},
+                timeout=120,
+            )
+            hf_resp.raise_for_status()
+            url = _upload_to_imgbb(hf_resp.content)
+            print(f"HF FLUX image hosted at: {url}")
+            return url
+        except Exception as e:
+            print(f"HF FLUX error: {e} — trying Pexels")
+
+    # 2. Pexels — free, high-res professional photos
     if PEXELS_API_KEY:
         try:
             resp = requests.get(
@@ -104,12 +139,13 @@ def fetch_image_url(event_name, image_prompt):
             photos = resp.json().get("photos", [])
             if photos:
                 url = photos[0]["src"]["large2x"]
-                print(f"Pexels image found: {url}")
+                print(f"Pexels image: {url}")
                 return url
             print("Pexels: no results, falling back to Pollinations")
         except Exception as e:
             print(f"Pexels error: {e} — falling back to Pollinations")
 
+    # 3. Pollinations — no API key needed, lower quality
     encoded = urllib.parse.quote(image_prompt)
     return f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true&model=flux"
 
