@@ -1,0 +1,28 @@
+name: Facebook Post Bot
+
+on:
+  schedule:
+    - cron: '0 8 * * *'   # Runs daily at 8:00 AM UTC
+  workflow_dispatch:        # Allows manual trigger from GitHub UI
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Facebook bot
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+        run: python bot.py
