@@ -188,30 +188,31 @@ def fetch_image_url(event_name, image_prompt):
     enriched = _enrich_prompt(image_prompt)
     print(f"Enriched prompt: {enriched}")
 
-    # 1. Hugging Face FLUX.1-schnell
+    # 1. Hugging Face FLUX.1-dev
     if HF_TOKEN and IMGBB_API_KEY:
         try:
-            print("Generating image with HF FLUX.1-schnell...")
+            print("Generating image with HF FLUX.1-dev...")
             hf_resp = requests.post(
-                "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
+                "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev",
                 headers={"Authorization": f"Bearer {HF_TOKEN}"},
                 json={
                     "inputs": enriched,
                     "parameters": {
                         "width": 1024,
                         "height": 1024,
-                        "num_inference_steps": 4,
+                        "num_inference_steps": 28,
+                        "guidance_scale": 3.5,
                         "seed": random.randint(0, 2**32 - 1),
                     },
                 },
-                timeout=120,
+                timeout=180,
             )
             hf_resp.raise_for_status()
             url = _process_and_host(hf_resp.content)
-            print(f"HF FLUX image with logo hosted at: {url}")
+            print(f"HF FLUX.1-dev image with logo hosted at: {url}")
             return url
         except Exception as e:
-            print(f"HF FLUX error: {e} — trying Pexels")
+            print(f"HF FLUX.1-dev error: {e} — trying Pexels")
 
     # 2. Pexels
     if PEXELS_API_KEY:
