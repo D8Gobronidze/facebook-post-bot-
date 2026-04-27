@@ -4,10 +4,16 @@ import requests
 from datetime import datetime
 from groq import Groq
 import io
+import json
+import urllib.parse
 
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 FB_PAGE_TOKEN = os.environ["FB_PAGE_ACCESS_TOKEN"]
 FB_PAGE_ID = "706511265884553"
+
+IG_USER_ID = os.environ.get("INSTAGRAM_USER_ID", "")
+IG_ACCESS_TOKEN = os.environ.get("INSTAGRAM_ACCESS_TOKEN", FB_PAGE_TOKEN)
+
 SHEET_CSV_URL = (
     "https://docs.google.com/spreadsheets/d/"
     "1hzH4sVjs6SUPqD_4S0hM0ZvGz6anZQpYSVeInHvl66Y"
@@ -48,22 +54,53 @@ def get_todays_events(events):
     return matched
 
 
-def generate_post(event_name, status):
+def generate_content(event_name, status):
+    """Ask Groq to generate the full post: title, caption, hashtags, and image prompt."""
     client = Groq(api_key=GROQ_API_KEY)
     prompt = (
-        f"Create an engaging Facebook post for this event:\n"
+        f"You are a social media manager. Generate content for this event:\n"
         f"Event: {event_name}\n"
         f"Status: {status}\n\n"
-        f"Make it warm, friendly, and suitable for a Facebook page audience. "
-        f"Include relevant emojis. Keep it under 200 words. "
-        f"Write only the post text, nothing else."
+        f"Return ONLY a valid JSON object with these exact keys:\n"
+        f"  title: a short punchy headline (max 10 words)\n"
+        f"  caption: warm friendly post body with emojis (max 150 words)\n"
+        f"  hashtags: a string of 10-15 relevant hashtags separated by spaces\n"
+        f"  image_prompt: a detailed visual description for an AI image generator "
+        f"(describe the scene, style, colors, mood — no text or logos in the image)\n\n"
+        f"Example format:\n"
+        f'{{"title": "...", "caption": "...", "hashtags": "#tag1 #tag2", "image_prompt": "..."}}\n\n'
+        f"Return only the JSON, no extra text."
     )
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=350,
+        max_tokens=600,
     )
-    return response.choices[0].message.content.strip()
+    raw = response.choices[0].message.content.strip()
+
+    # Strip markdown code fences if present
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip()
+
+    return json.loads(raw)
+
+
+def build_image_url(image_prompt):
+    """Generate a free image via Pollinations.ai — no API key needed."""
+    encoded = urllib.parse.quote(image_prompt)
+    # 1080x1080 is ideal for Instagram square posts
+    return f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1080&nologo=true"
+
+
+def build_facebook_post(title, caption, hashtags):
+    return f"{title}\n\n{caption}\n\n{hashtags}"
+
+
+def build_instagram_caption(title, caption, hashtags):
+    return f"{title}\n\n{caption}\n\n{hashtags}"
 
 
 def post_to_facebook(message):
@@ -75,6 +112,34 @@ def post_to_facebook(message):
     )
     response.raise_for_status()
     return response.json()
+
+
+def post_to_instagram(caption, image_url):
+    """Post a photo to Instagram using the Meta Graph API."""
+    # Step 1: create media container
+    container_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media"
+    container_resp = requests.post(
+        container_url,
+        data={
+            "image_url": image_url,
+            "caption": caption,
+            "access_token": IG_ACCESS_TOKEN,
+        },
+        timeout=30,
+    )
+    container_resp.raise_for_status()
+    creation_id = container_resp.json().get("id")
+    print(f"Instagram: media container created (id: {creation_id})")
+
+    # Step 2: publish the container
+    publish_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media_publish"
+    publish_resp = requests.post(
+        publish_url,
+        data={"creation_id": creation_id, "access_token": IG_ACCESS_TOKEN},
+        timeout=30,
+    )
+    publish_resp.raise_for_status()
+    return publish_resp.json()
 
 
 def main():
@@ -95,12 +160,32 @@ def main():
         if not event_name:
             continue
 
-        print(f"Generating post for: {event_name} [{status}]")
-        post_text = generate_post(event_name, status)
-        print(f"Generated post:\n{post_text}\n")
+        print(f"\nGenerating content for: {event_name} [{status}]")
+        content = generate_content(event_name, status)
 
-        result = post_to_facebook(post_text)
-        print(f"Successfully posted! Post ID: {result.get('id')}")
+        title = content.get("title", event_name)
+        caption = content.get("caption", "")
+        hashtags = content.get("hashtags", "")
+        image_prompt = content.get("image_prompt", f"vibrant event poster for {event_name}")
+
+        print(f"Title: {title}")
+        print(f"Caption: {caption}")
+        print(f"Hashtags: {hashtags}")
+        print(f"Image prompt: {image_prompt}")
+
+        image_url = build_image_url(image_prompt)
+        print(f"Image URL: {image_url}")
+
+        fb_text = build_facebook_post(title, caption, hashtags)
+        fb_result = post_to_facebook(fb_text)
+        print(f"Facebook: posted successfully. Post ID: {fb_result.get('id')}")
+
+        if IG_USER_ID:
+            ig_caption = build_instagram_caption(title, caption, hashtags)
+            ig_result = post_to_instagram(ig_caption, image_url)
+            print(f"Instagram: posted successfully. Post ID: {ig_result.get('id')}")
+        else:
+            print("Instagram: skipped — INSTAGRAM_USER_ID not configured.")
 
 
 if __name__ == "__main__":

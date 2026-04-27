@@ -1,9 +1,9 @@
-name: Facebook Post Bot
+name: Facebook & Instagram Post Bot
 
 on:
   schedule:
-    - cron: '0 8 * * *'   # Runs daily at 8:00 AM UTC
-  workflow_dispatch:        # Allows manual trigger from GitHub UI
+    - cron: '0 10 * * *'   # Runs daily at 10:00 AM UTC — change this to your test time
+  workflow_dispatch:         # Allows manual trigger from GitHub Actions UI (for testing)
 
 jobs:
   post:
@@ -23,8 +23,10 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run Facebook bot
+      - name: Run bot
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+          INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
+          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
         run: python bot.py
