@@ -93,7 +93,7 @@ def build_image_url(image_prompt):
     """Generate a free image via Pollinations.ai — no API key needed."""
     encoded = urllib.parse.quote(image_prompt)
     # 1080x1080 is ideal for Instagram square posts
-    return f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1080&nologo=true"
+    return f"https://image.pollinations.ai/prompt/{encoded}?width=1080&height=1080&nologo=true&model=flux&enhance=true"
 
 
 def build_facebook_post(title, caption, hashtags):
@@ -104,12 +104,12 @@ def build_instagram_caption(title, caption, hashtags):
     return f"{title}\n\n{caption}\n\n{hashtags}"
 
 
-def post_to_facebook(message):
-    url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/feed"
+def post_to_facebook(message, image_url):
+    url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/photos"
     response = requests.post(
         url,
-        data={"message": message, "access_token": FB_PAGE_TOKEN},
-        timeout=15,
+        data={"url": image_url, "caption": message, "access_token": FB_PAGE_TOKEN},
+        timeout=30,
     )
     response.raise_for_status()
     return response.json()
@@ -202,7 +202,7 @@ def main():
         print(f"Image URL: {image_url}")
 
         fb_text = build_facebook_post(title, caption, hashtags)
-        fb_result = post_to_facebook(fb_text)
+        fb_result = post_to_facebook(fb_text, image_url)
         print(f"Facebook: posted successfully. Post ID: {fb_result.get('id')}")
 
         if IG_USER_ID:
