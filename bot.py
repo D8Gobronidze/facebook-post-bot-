@@ -14,6 +14,7 @@ FB_PAGE_ID = "706511265884553"
 
 IG_USER_ID = os.environ.get("INSTAGRAM_USER_ID", "")
 IG_ACCESS_TOKEN = os.environ.get("INSTAGRAM_ACCESS_TOKEN", FB_PAGE_TOKEN)
+PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "")
 
 SHEET_CSV_URL = (
     "https://docs.google.com/spreadsheets/d/"
@@ -89,10 +90,28 @@ def generate_content(event_name, status):
     return json.loads(raw)
 
 
-def build_image_url(image_prompt):
-    """Generate a free image via Pollinations.ai — no API key needed."""
+def fetch_image_url(event_name, image_prompt):
+    """Return a high-quality image URL. Uses Pexels if API key is set, else Pollinations."""
+    if PEXELS_API_KEY:
+        try:
+            resp = requests.get(
+                "https://api.pexels.com/v1/search",
+                headers={"Authorization": PEXELS_API_KEY},
+                params={"query": event_name, "per_page": 1, "orientation": "square"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            photos = resp.json().get("photos", [])
+            if photos:
+                url = photos[0]["src"]["large2x"]
+                print(f"Pexels image found: {url}")
+                return url
+            print("Pexels: no results, falling back to Pollinations")
+        except Exception as e:
+            print(f"Pexels error: {e} — falling back to Pollinations")
+
     encoded = urllib.parse.quote(image_prompt)
-    return f"https://image.pollinations.ai/prompt/{encoded}?width=1440&height=1440&nologo=true&model=flux&enhance=true"
+    return f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true&model=flux"
 
 
 def build_facebook_post(title, caption, hashtags):
@@ -216,7 +235,7 @@ def main():
         print(f"Hashtags: {hashtags}")
         print(f"Image prompt: {image_prompt}")
 
-        image_url = build_image_url(image_prompt)
+        image_url = fetch_image_url(event_name, image_prompt)
         print(f"Image URL: {image_url}")
 
         fb_text = build_facebook_post(title, caption, hashtags)
