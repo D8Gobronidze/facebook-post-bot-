@@ -33,6 +33,16 @@ _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGO_DARK_PATH = os.path.join(_BASE_DIR, "Ground zero bl.svg")   # dark logo → light backgrounds
 LOGO_WHITE_PATH = os.path.join(_BASE_DIR, "Ground zero white.svg")  # white logo → dark backgrounds
 
+# Set to a non-empty string to override the AI-generated image prompt for testing.
+# Clear this back to "" once you are happy with the model output.
+TEST_IMAGE_PROMPT = (
+    "A high-contrast cinematic portrait of an anthropomorphic Golden Eagle warrior. "
+    "The creature has a realistic eagle head with sharp golden eyes and a curved beak, "
+    "transitioning into a muscular human torso wearing traditional Georgian Chokha armor. "
+    "Massive feathered wings emerge from the back. Intricate plumage textures, sharp focus, "
+    "8k resolution, stylized for apparel design, deep shadows."
+)
+
 STYLE_VARIANTS = [
     "professional DSLR photography, golden hour, shallow depth of field, bokeh background",
     "commercial studio photography, clean bright background, sharp focus, high resolution",
@@ -190,20 +200,24 @@ def fetch_image_url(event_name, image_prompt):
     enriched = _enrich_prompt(image_prompt)
     print(f"Enriched prompt: {enriched}")
 
-    # 1. Hugging Face FLUX.1-dev
+    # 1. Hugging Face RealVisXL V4.0 (SDXL — better anatomy and creature assembly than FLUX)
     if HF_TOKEN and IMGBB_API_KEY:
         try:
-            print("Generating image with HF FLUX.1-dev...")
+            print("Generating image with HF RealVisXL V4.0...")
             hf_resp = requests.post(
-                "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev",
+                "https://api-inference.huggingface.co/models/SG161222/RealVisXL_V4.0",
                 headers={"Authorization": f"Bearer {HF_TOKEN}"},
                 json={
                     "inputs": enriched,
                     "parameters": {
+                        "negative_prompt": (
+                            "blurry, distorted, deformed, bad anatomy, fused limbs, "
+                            "extra fingers, duplicate, low quality, watermark, text, logo"
+                        ),
                         "width": 1024,
                         "height": 1024,
-                        "num_inference_steps": 28,
-                        "guidance_scale": 3.5,
+                        "num_inference_steps": 30,
+                        "guidance_scale": 6.0,
                         "seed": random.randint(0, 2**32 - 1),
                     },
                 },
@@ -211,10 +225,10 @@ def fetch_image_url(event_name, image_prompt):
             )
             hf_resp.raise_for_status()
             url = _process_and_host(hf_resp.content)
-            print(f"HF FLUX.1-dev image with logo hosted at: {url}")
+            print(f"HF RealVisXL image with logo hosted at: {url}")
             return url
         except Exception as e:
-            print(f"HF FLUX.1-dev error: {e} — trying Pexels")
+            print(f"HF RealVisXL error: {e} — trying Pexels")
 
     # 2. Pexels
     if PEXELS_API_KEY:
@@ -371,6 +385,9 @@ def main():
         caption = content.get("caption", "")
         hashtags = content.get("hashtags", "")
         image_prompt = content.get("image_prompt", f"vibrant event poster for {event_name}")
+        if TEST_IMAGE_PROMPT:
+            image_prompt = TEST_IMAGE_PROMPT
+            print("TEST_IMAGE_PROMPT override active.")
 
         print(f"Title: {title}")
         print(f"Caption: {caption}")
