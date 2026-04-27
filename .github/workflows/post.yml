@@ -2,7 +2,7 @@ name: Facebook & Instagram Post Bot
 
 on:
   schedule:
-    - cron: '0 10 * * *'   # Runs daily at 10:00 AM UTC — change this to your test time
+    - cron: '0 5 * * *'    # Runs daily at 9:00 AM Georgia time (UTC+4)
   workflow_dispatch:         # Allows manual trigger from GitHub Actions UI (for testing)
 
 jobs:
