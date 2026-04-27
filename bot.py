@@ -22,6 +22,8 @@ IG_ACCESS_TOKEN = os.environ.get("INSTAGRAM_ACCESS_TOKEN", FB_PAGE_TOKEN)
 PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "")
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 IMGBB_API_KEY = os.environ.get("IMGBB_API_KEY", "")
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_REPO = os.environ.get("GITHUB_REPOSITORY", "")
 
 SHEET_CSV_URL = (
     "https://docs.google.com/spreadsheets/d/"
@@ -163,8 +165,38 @@ def _overlay_logo(image_bytes):
     return out.getvalue()
 
 
+def _upload_to_github(image_bytes):
+    """Commit image to the repo's bot-images/ folder and return the raw public URL."""
+    filename = f"post_{int(time.time())}.jpg"
+    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/bot-images/{filename}"
+    resp = requests.put(
+        api_url,
+        headers={
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+        },
+        json={
+            "message": "bot: add generated post image",
+            "content": base64.b64encode(image_bytes).decode("utf-8"),
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/bot-images/{filename}"
+    print(f"Hosted on GitHub: {url}")
+    return url
+
+
 def _host_image(image_bytes):
-    """Upload image bytes to a public host. Tries imgbb first, then catbox.moe (no account needed)."""
+    """Upload image bytes to a public host.
+    Tries GitHub (always available in Actions) → imgbb (if key set) → freeimage.host.
+    """
+    if GITHUB_TOKEN and GITHUB_REPO:
+        try:
+            return _upload_to_github(image_bytes)
+        except Exception as e:
+            print(f"GitHub upload failed ({e}) — trying imgbb")
+
     if IMGBB_API_KEY:
         try:
             resp = requests.post(
@@ -180,7 +212,6 @@ def _host_image(image_bytes):
         except Exception as e:
             print(f"imgbb upload failed ({e}) — trying freeimage.host")
 
-    # freeimage.host — free public API, works from CI
     resp = requests.post(
         "https://freeimage.host/api/1/upload",
         data={
