@@ -1,6 +1,7 @@
 import os
 import csv
 import base64
+import random
 import requests
 from datetime import datetime
 from groq import Groq
@@ -8,6 +9,9 @@ import io
 import json
 import time
 import urllib.parse
+
+from PIL import Image
+import cairosvg
 
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 FB_PAGE_TOKEN = os.environ["FB_PAGE_ACCESS_TOKEN"]
@@ -24,6 +28,25 @@ SHEET_CSV_URL = (
     "1hzH4sVjs6SUPqD_4S0hM0ZvGz6anZQpYSVeInHvl66Y"
     "/export?format=csv&gid=472347742"
 )
+
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOGO_DARK_PATH = os.path.join(_BASE_DIR, "Ground zero bl.svg")   # dark logo → light backgrounds
+LOGO_WHITE_PATH = os.path.join(_BASE_DIR, "Ground zero white.svg")  # white logo → dark backgrounds
+
+STYLE_VARIANTS = [
+    "cinematic lighting, golden hour, warm tones",
+    "dramatic shadows, high contrast, moody atmosphere",
+    "vibrant colors, studio lighting, clean background",
+    "soft natural light, pastel tones, airy feel",
+    "bold graphic style, flat illustration, minimal",
+    "dark dramatic mood, neon accents, urban feel",
+    "bright cheerful colors, outdoor setting, sunlit",
+    "elegant minimal, white space, luxury aesthetic",
+    "energetic dynamic composition, bright saturated colors",
+    "warm bokeh background, professional photography style",
+    "retro film grain, muted earth tones, vintage feel",
+    "futuristic clean lines, cool blues, tech aesthetic",
+]
 
 
 def fetch_events():
@@ -83,7 +106,6 @@ def generate_content(event_name, status):
     )
     raw = response.choices[0].message.content.strip()
 
-    # Strip markdown code fences if present
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -91,6 +113,47 @@ def generate_content(event_name, status):
     raw = raw.strip()
 
     return json.loads(raw)
+
+
+def _enrich_prompt(image_prompt):
+    """Append a random visual style to keep images varied across runs."""
+    style = random.choice(STYLE_VARIANTS)
+    return f"{image_prompt}, {style}"
+
+
+def _bottom_right_brightness(image_bytes):
+    """Return mean brightness (0-255) of the bottom-right quadrant."""
+    img = Image.open(io.BytesIO(image_bytes)).convert("L")
+    w, h = img.size
+    region = img.crop((w // 2, h // 2, w, h))
+    pixels = list(region.getdata())
+    return sum(pixels) / len(pixels)
+
+
+def _overlay_logo(image_bytes):
+    """Composite the appropriate logo onto the bottom-right corner."""
+    brightness = _bottom_right_brightness(image_bytes)
+    # Light background → use dark logo; dark background → use white logo
+    logo_path = LOGO_DARK_PATH if brightness > 128 else LOGO_WHITE_PATH
+    print(f"Bottom-right brightness: {brightness:.0f} → using {'dark' if brightness > 128 else 'white'} logo")
+
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+    w, h = img.size
+
+    logo_width = w // 6  # ~16% of image width
+    with open(logo_path, "rb") as f:
+        logo_svg = f.read()
+    logo_png = cairosvg.svg2png(bytestring=logo_svg, output_width=logo_width)
+    logo = Image.open(io.BytesIO(logo_png)).convert("RGBA")
+
+    padding = 24
+    x = w - logo.width - padding
+    y = h - logo.height - padding
+    img.paste(logo, (x, y), logo)
+
+    out = io.BytesIO()
+    img.convert("RGB").save(out, format="JPEG", quality=92)
+    return out.getvalue()
 
 
 def _upload_to_imgbb(image_bytes):
@@ -105,28 +168,45 @@ def _upload_to_imgbb(image_bytes):
     return resp.json()["data"]["url"]
 
 
+def _process_and_host(image_bytes):
+    """Apply logo overlay then upload to imgbb. Returns hosted URL."""
+    processed = _overlay_logo(image_bytes)
+    return _upload_to_imgbb(processed)
+
+
 def fetch_image_url(event_name, image_prompt):
-    """Return a high-quality image URL.
-    Priority: HF FLUX.1 (1024px AI) → Pexels (1880px photo) → Pollinations (fallback).
+    """Return a public image URL with logo overlaid.
+    Priority: HF FLUX.1 (AI-generated) → Pexels (photo) → Pollinations (fallback).
     """
-    # 1. Hugging Face FLUX.1-schnell — free, 1024x1024 AI-generated
+    enriched = _enrich_prompt(image_prompt)
+    print(f"Enriched prompt: {enriched}")
+
+    # 1. Hugging Face FLUX.1-schnell
     if HF_TOKEN and IMGBB_API_KEY:
         try:
             print("Generating image with HF FLUX.1-schnell...")
             hf_resp = requests.post(
                 "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
                 headers={"Authorization": f"Bearer {HF_TOKEN}"},
-                json={"inputs": image_prompt, "parameters": {"width": 1024, "height": 1024, "num_inference_steps": 4}},
+                json={
+                    "inputs": enriched,
+                    "parameters": {
+                        "width": 1024,
+                        "height": 1024,
+                        "num_inference_steps": 4,
+                        "seed": random.randint(0, 2**32 - 1),
+                    },
+                },
                 timeout=120,
             )
             hf_resp.raise_for_status()
-            url = _upload_to_imgbb(hf_resp.content)
-            print(f"HF FLUX image hosted at: {url}")
+            url = _process_and_host(hf_resp.content)
+            print(f"HF FLUX image with logo hosted at: {url}")
             return url
         except Exception as e:
             print(f"HF FLUX error: {e} — trying Pexels")
 
-    # 2. Pexels — free, high-res professional photos
+    # 2. Pexels
     if PEXELS_API_KEY:
         try:
             resp = requests.get(
@@ -138,16 +218,32 @@ def fetch_image_url(event_name, image_prompt):
             resp.raise_for_status()
             photos = resp.json().get("photos", [])
             if photos:
-                url = photos[0]["src"]["large2x"]
-                print(f"Pexels image: {url}")
-                return url
+                pexels_url = photos[0]["src"]["large2x"]
+                if IMGBB_API_KEY:
+                    img_resp = requests.get(pexels_url, timeout=30)
+                    img_resp.raise_for_status()
+                    url = _process_and_host(img_resp.content)
+                    print(f"Pexels image with logo hosted at: {url}")
+                    return url
+                print(f"Pexels image (no logo — imgbb key missing): {pexels_url}")
+                return pexels_url
             print("Pexels: no results, falling back to Pollinations")
         except Exception as e:
             print(f"Pexels error: {e} — falling back to Pollinations")
 
-    # 3. Pollinations — no API key needed, lower quality
-    encoded = urllib.parse.quote(image_prompt)
-    return f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true&model=flux"
+    # 3. Pollinations fallback
+    encoded = urllib.parse.quote(enriched)
+    poll_url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true&model=flux&seed={random.randint(0, 99999)}"
+    if IMGBB_API_KEY:
+        try:
+            img_resp = requests.get(poll_url, timeout=120)
+            img_resp.raise_for_status()
+            url = _process_and_host(img_resp.content)
+            print(f"Pollinations image with logo hosted at: {url}")
+            return url
+        except Exception as e:
+            print(f"Pollinations download error: {e} — using direct URL (no logo)")
+    return poll_url
 
 
 def build_facebook_post(title, caption, hashtags):
@@ -170,7 +266,7 @@ def post_to_facebook(message, image_url):
 
 
 def ensure_image_ready(image_url, retries=3, delay=10):
-    """Hit the Pollinations URL to trigger generation and wait until it responds with an image."""
+    """Confirm the image URL serves an actual image before posting to Instagram."""
     for attempt in range(retries):
         try:
             resp = requests.get(image_url, timeout=60)

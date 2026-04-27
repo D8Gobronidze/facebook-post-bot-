@@ -1,2 +1,4 @@
 requests
 groq
+Pillow
+cairosvg
