@@ -1,3 +1,4 @@
 requests
 groq
 Pillow
+huggingface_hub

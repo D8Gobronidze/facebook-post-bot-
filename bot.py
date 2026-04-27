@@ -10,7 +10,8 @@ import json
 import time
 import urllib.parse
 
-from PIL import Image
+from PIL import Image, ImageStat
+from huggingface_hub import InferenceClient
 
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 FB_PAGE_TOKEN = os.environ["FB_PAGE_ACCESS_TOKEN"]
@@ -134,8 +135,7 @@ def _bottom_right_brightness(image_bytes):
     img = Image.open(io.BytesIO(image_bytes)).convert("L")
     w, h = img.size
     region = img.crop((w // 2, h // 2, w, h))
-    pixels = list(region.getdata(0))
-    return sum(pixels) / len(pixels)
+    return ImageStat.Stat(region).mean[0]
 
 
 def _overlay_logo(image_bytes):
@@ -178,16 +178,21 @@ def _host_image(image_bytes):
             print(f"Hosted on imgbb: {url}")
             return url
         except Exception as e:
-            print(f"imgbb upload failed ({e}) — trying 0x0.st")
+            print(f"imgbb upload failed ({e}) — trying freeimage.host")
 
+    # freeimage.host — free public API, works from CI
     resp = requests.post(
-        "https://0x0.st",
-        files={"file": ("image.jpg", image_bytes, "image/jpeg")},
+        "https://freeimage.host/api/1/upload",
+        data={
+            "key": "6d207e02198a847aa98d0a2a901485a5",
+            "source": base64.b64encode(image_bytes).decode("utf-8"),
+            "format": "json",
+        },
         timeout=30,
     )
     resp.raise_for_status()
-    url = resp.text.strip()
-    print(f"Hosted on 0x0.st: {url}")
+    url = resp.json()["image"]["url"]
+    print(f"Hosted on freeimage.host: {url}")
     return url
 
 
@@ -210,27 +215,22 @@ def fetch_image_url(event_name, image_prompt):
     enriched = _enrich_prompt(image_prompt)
     print(f"Enriched prompt: {enriched}")
 
-    # 1. Hugging Face FLUX.1-schnell (Apache 2.0, no license gate, confirmed working)
+    # 1. Hugging Face FLUX.1-schnell via InferenceClient (handles routing automatically)
     if HF_TOKEN:
         try:
             print("Generating image with HF FLUX.1-schnell...")
-            hf_resp = requests.post(
-                "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
-                headers={"Authorization": f"Bearer {HF_TOKEN}"},
-                json={
-                    "inputs": enriched,
-                    "parameters": {
-                        "width": 1024,
-                        "height": 1024,
-                        "num_inference_steps": 4,
-                        "seed": random.randint(0, 2**32 - 1),
-                    },
-                },
-                timeout=120,
+            hf_client = InferenceClient(token=HF_TOKEN)
+            pil_img = hf_client.text_to_image(
+                enriched,
+                model="black-forest-labs/FLUX.1-schnell",
+                width=1024,
+                height=1024,
+                num_inference_steps=4,
             )
-            print(f"HF status: {hf_resp.status_code}, content-type: {hf_resp.headers.get('Content-Type')}")
-            hf_resp.raise_for_status()
-            return _process_and_host(hf_resp.content)
+            buf = io.BytesIO()
+            pil_img.save(buf, format="JPEG", quality=92)
+            print("HF FLUX.1-schnell generation successful.")
+            return _process_and_host(buf.getvalue())
         except Exception as e:
             print(f"HF FLUX.1-schnell error: {e} — trying Pexels")
 
