@@ -94,7 +94,9 @@ def generate_content(event_name, status):
         f"  caption: warm friendly post body with emojis (max 150 words)\n"
         f"  hashtags: a string of 10-15 relevant hashtags separated by spaces\n"
         f"  image_prompt: a detailed photorealistic description for an AI image generator — "
-        f"describe a real-world professional photography scene (location, lighting, subject, camera angle). "
+        f"describe a real-world professional photography scene (location, objects, environment, lighting, camera angle). "
+        f"IMPORTANT: do NOT include any people, faces, or humans in the scene. "
+        f"Focus on objects, places, food, nature, architecture, products, or abstract concepts. "
         f"Must feel like a high-quality DSLR photo, not a painting or illustration. "
         f"No text, no logos, no watermarks in the image.\n\n"
         f"Example format:\n"
@@ -120,7 +122,7 @@ def generate_content(event_name, status):
 def _enrich_prompt(image_prompt):
     """Append a random professional photography style to keep images varied across runs."""
     style = random.choice(STYLE_VARIANTS)
-    return f"{image_prompt}, {style}, photorealistic, hyperrealistic, no text, no watermarks"
+    return f"{image_prompt}, {style}, photorealistic, hyperrealistic, no people, no faces, no humans, no text, no watermarks"
 
 
 def _bottom_right_brightness(image_bytes):
