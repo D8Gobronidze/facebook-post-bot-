@@ -11,7 +11,6 @@ import time
 import urllib.parse
 
 from PIL import Image
-import cairosvg
 
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 FB_PAGE_TOKEN = os.environ["FB_PAGE_ACCESS_TOKEN"]
@@ -30,8 +29,8 @@ SHEET_CSV_URL = (
 )
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOGO_DARK_PATH = os.path.join(_BASE_DIR, "Ground zero bl.svg")   # dark logo → light backgrounds
-LOGO_WHITE_PATH = os.path.join(_BASE_DIR, "Ground zero white.svg")  # white logo → dark backgrounds
+LOGO_DARK_PATH = os.path.join(_BASE_DIR, "logo_dark.png")   # dark logo → light backgrounds
+LOGO_WHITE_PATH = os.path.join(_BASE_DIR, "logo_white.png")  # white logo → dark backgrounds
 
 # Set to a non-empty string to override the AI-generated image prompt for testing.
 # Clear this back to "" once you are happy with the model output.
@@ -155,10 +154,9 @@ def _overlay_logo(image_bytes):
     w, h = img.size
 
     logo_width = w // 6  # ~16% of image width
-    with open(logo_path, "rb") as f:
-        logo_svg = f.read()
-    logo_png = cairosvg.svg2png(bytestring=logo_svg, output_width=logo_width)
-    logo = Image.open(io.BytesIO(logo_png)).convert("RGBA")
+    logo = Image.open(logo_path).convert("RGBA")
+    ratio = logo_width / logo.width
+    logo = logo.resize((logo_width, int(logo.height * ratio)), Image.LANCZOS)
 
     padding = 24
     x = w - logo.width - padding
