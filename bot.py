@@ -134,7 +134,7 @@ def _bottom_right_brightness(image_bytes):
     img = Image.open(io.BytesIO(image_bytes)).convert("L")
     w, h = img.size
     region = img.crop((w // 2, h // 2, w, h))
-    pixels = list(region.getdata())
+    pixels = list(region.getdata(0))
     return sum(pixels) / len(pixels)
 
 
@@ -178,17 +178,16 @@ def _host_image(image_bytes):
             print(f"Hosted on imgbb: {url}")
             return url
         except Exception as e:
-            print(f"imgbb upload failed ({e}) — trying catbox.moe")
+            print(f"imgbb upload failed ({e}) — trying 0x0.st")
 
     resp = requests.post(
-        "https://catbox.moe/user/api.php",
-        data={"reqtype": "fileupload"},
-        files={"fileToUpload": ("image.jpg", image_bytes, "image/jpeg")},
+        "https://0x0.st",
+        files={"file": ("image.jpg", image_bytes, "image/jpeg")},
         timeout=30,
     )
     resp.raise_for_status()
     url = resp.text.strip()
-    print(f"Hosted on catbox.moe: {url}")
+    print(f"Hosted on 0x0.st: {url}")
     return url
 
 
@@ -205,36 +204,35 @@ def _process_and_host(image_bytes):
 
 def fetch_image_url(event_name, image_prompt):
     """Return a public image URL with logo overlaid.
-    Priority: HF FLUX.1-dev (AI-generated) → Pexels (photo) → Pollinations (fallback).
-    Logo is always applied — hosted via imgbb or catbox.moe.
+    Priority: HF FLUX.1-schnell (AI-generated) → Pexels (photo) → Pollinations (fallback).
+    Logo is always applied — hosted via imgbb or 0x0.st.
     """
     enriched = _enrich_prompt(image_prompt)
     print(f"Enriched prompt: {enriched}")
 
-    # 1. Hugging Face FLUX.1-dev
+    # 1. Hugging Face FLUX.1-schnell (Apache 2.0, no license gate, confirmed working)
     if HF_TOKEN:
         try:
-            print("Generating image with HF FLUX.1-dev...")
+            print("Generating image with HF FLUX.1-schnell...")
             hf_resp = requests.post(
-                "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev",
+                "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
                 headers={"Authorization": f"Bearer {HF_TOKEN}"},
                 json={
                     "inputs": enriched,
                     "parameters": {
                         "width": 1024,
                         "height": 1024,
-                        "num_inference_steps": 28,
-                        "guidance_scale": 3.5,
+                        "num_inference_steps": 4,
                         "seed": random.randint(0, 2**32 - 1),
                     },
                 },
-                timeout=180,
+                timeout=120,
             )
             print(f"HF status: {hf_resp.status_code}, content-type: {hf_resp.headers.get('Content-Type')}")
             hf_resp.raise_for_status()
             return _process_and_host(hf_resp.content)
         except Exception as e:
-            print(f"HF FLUX.1-dev error: {e} — trying Pexels")
+            print(f"HF FLUX.1-schnell error: {e} — trying Pexels")
 
     # 2. Pexels
     if PEXELS_API_KEY:
