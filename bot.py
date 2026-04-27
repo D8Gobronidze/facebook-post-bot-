@@ -34,18 +34,18 @@ LOGO_DARK_PATH = os.path.join(_BASE_DIR, "Ground zero bl.svg")   # dark logo →
 LOGO_WHITE_PATH = os.path.join(_BASE_DIR, "Ground zero white.svg")  # white logo → dark backgrounds
 
 STYLE_VARIANTS = [
-    "cinematic lighting, golden hour, warm tones",
-    "dramatic shadows, high contrast, moody atmosphere",
-    "vibrant colors, studio lighting, clean background",
-    "soft natural light, pastel tones, airy feel",
-    "bold graphic style, flat illustration, minimal",
-    "dark dramatic mood, neon accents, urban feel",
-    "bright cheerful colors, outdoor setting, sunlit",
-    "elegant minimal, white space, luxury aesthetic",
-    "energetic dynamic composition, bright saturated colors",
-    "warm bokeh background, professional photography style",
-    "retro film grain, muted earth tones, vintage feel",
-    "futuristic clean lines, cool blues, tech aesthetic",
+    "professional DSLR photography, golden hour, shallow depth of field, bokeh background",
+    "commercial studio photography, clean bright background, sharp focus, high resolution",
+    "editorial magazine photography, dramatic natural lighting, crisp detail, vivid colors",
+    "luxury brand photography, cinematic lighting, ultra-sharp, rich colors",
+    "lifestyle photography, warm natural sunlight, authentic candid feel, 4K",
+    "corporate professional photography, polished clean look, high detail, bright",
+    "aerial wide-angle photography, crystal clear, dynamic composition, ultra HD",
+    "photojournalism style, real-world scene, honest lighting, sharp and detailed",
+    "product photography, neutral background, perfect exposure, professional retouch",
+    "outdoor event photography, vibrant atmosphere, people in motion, sharp focus",
+    "architectural photography, wide perspective, natural light, ultra-detailed",
+    "documentary photography, candid real moment, natural colors, high clarity",
 ]
 
 
@@ -93,8 +93,10 @@ def generate_content(event_name, status):
         f"  title: a short punchy headline (max 10 words)\n"
         f"  caption: warm friendly post body with emojis (max 150 words)\n"
         f"  hashtags: a string of 10-15 relevant hashtags separated by spaces\n"
-        f"  image_prompt: a detailed visual description for an AI image generator "
-        f"(describe the scene, style, colors, mood — no text or logos in the image)\n\n"
+        f"  image_prompt: a detailed photorealistic description for an AI image generator — "
+        f"describe a real-world professional photography scene (location, lighting, subject, camera angle). "
+        f"Must feel like a high-quality DSLR photo, not a painting or illustration. "
+        f"No text, no logos, no watermarks in the image.\n\n"
         f"Example format:\n"
         f'{{"title": "...", "caption": "...", "hashtags": "#tag1 #tag2", "image_prompt": "..."}}\n\n'
         f"Return only the JSON, no extra text."
@@ -116,9 +118,9 @@ def generate_content(event_name, status):
 
 
 def _enrich_prompt(image_prompt):
-    """Append a random visual style to keep images varied across runs."""
+    """Append a random professional photography style to keep images varied across runs."""
     style = random.choice(STYLE_VARIANTS)
-    return f"{image_prompt}, {style}"
+    return f"{image_prompt}, {style}, photorealistic, hyperrealistic, no text, no watermarks"
 
 
 def _bottom_right_brightness(image_bytes):
@@ -170,7 +172,12 @@ def _upload_to_imgbb(image_bytes):
 
 def _process_and_host(image_bytes):
     """Apply logo overlay then upload to imgbb. Returns hosted URL."""
-    processed = _overlay_logo(image_bytes)
+    try:
+        processed = _overlay_logo(image_bytes)
+        print("Logo overlay applied successfully.")
+    except Exception as e:
+        print(f"WARNING: Logo overlay failed ({e}) — uploading image without logo.")
+        processed = image_bytes
     return _upload_to_imgbb(processed)
 
 
