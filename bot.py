@@ -5,6 +5,7 @@ from datetime import datetime
 from groq import Groq
 import io
 import json
+import time
 import urllib.parse
 
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
@@ -114,8 +115,28 @@ def post_to_facebook(message):
     return response.json()
 
 
+def ensure_image_ready(image_url, retries=3, delay=10):
+    """Hit the Pollinations URL to trigger generation and wait until it responds with an image."""
+    for attempt in range(retries):
+        try:
+            resp = requests.get(image_url, timeout=60)
+            content_type = resp.headers.get("Content-Type", "")
+            if resp.status_code == 200 and "image" in content_type:
+                print(f"Image ready (attempt {attempt + 1}), content-type: {content_type}")
+                return True
+        except requests.RequestException as e:
+            print(f"Image fetch attempt {attempt + 1} failed: {e}")
+        if attempt < retries - 1:
+            print(f"Waiting {delay}s before retry...")
+            time.sleep(delay)
+    print("Warning: could not confirm image is ready — proceeding anyway")
+    return False
+
+
 def post_to_instagram(caption, image_url):
     """Post a photo to Instagram using the Meta Graph API."""
+    ensure_image_ready(image_url)
+
     # Step 1: create media container
     container_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media"
     container_resp = requests.post(
@@ -127,6 +148,8 @@ def post_to_instagram(caption, image_url):
         },
         timeout=30,
     )
+    if not container_resp.ok:
+        print(f"Instagram container error {container_resp.status_code}: {container_resp.text}")
     container_resp.raise_for_status()
     creation_id = container_resp.json().get("id")
     print(f"Instagram: media container created (id: {creation_id})")
@@ -138,6 +161,8 @@ def post_to_instagram(caption, image_url):
         data={"creation_id": creation_id, "access_token": IG_ACCESS_TOKEN},
         timeout=30,
     )
+    if not publish_resp.ok:
+        print(f"Instagram publish error {publish_resp.status_code}: {publish_resp.text}")
     publish_resp.raise_for_status()
     return publish_resp.json()
 
