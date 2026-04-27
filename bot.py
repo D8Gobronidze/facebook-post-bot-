@@ -163,38 +163,56 @@ def _overlay_logo(image_bytes):
     return out.getvalue()
 
 
-def _upload_to_imgbb(image_bytes):
-    """Upload raw image bytes to imgbb and return the public URL."""
+def _host_image(image_bytes):
+    """Upload image bytes to a public host. Tries imgbb first, then catbox.moe (no account needed)."""
+    if IMGBB_API_KEY:
+        try:
+            resp = requests.post(
+                "https://api.imgbb.com/1/upload",
+                params={"key": IMGBB_API_KEY},
+                data={"image": base64.b64encode(image_bytes).decode("utf-8")},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            url = resp.json()["data"]["url"]
+            print(f"Hosted on imgbb: {url}")
+            return url
+        except Exception as e:
+            print(f"imgbb upload failed ({e}) — trying catbox.moe")
+
     resp = requests.post(
-        "https://api.imgbb.com/1/upload",
-        params={"key": IMGBB_API_KEY},
-        data={"image": base64.b64encode(image_bytes).decode("utf-8")},
+        "https://catbox.moe/user/api.php",
+        data={"reqtype": "fileupload"},
+        files={"fileToUpload": ("image.jpg", image_bytes, "image/jpeg")},
         timeout=30,
     )
     resp.raise_for_status()
-    return resp.json()["data"]["url"]
+    url = resp.text.strip()
+    print(f"Hosted on catbox.moe: {url}")
+    return url
 
 
 def _process_and_host(image_bytes):
-    """Apply logo overlay then upload to imgbb. Returns hosted URL."""
+    """Apply logo overlay then upload to a public host. Returns hosted URL."""
     try:
         processed = _overlay_logo(image_bytes)
         print("Logo overlay applied successfully.")
     except Exception as e:
         print(f"WARNING: Logo overlay failed ({e}) — uploading image without logo.")
         processed = image_bytes
-    return _upload_to_imgbb(processed)
+    return _host_image(processed)
 
 
 def fetch_image_url(event_name, image_prompt):
     """Return a public image URL with logo overlaid.
-    Priority: HF FLUX.1 (AI-generated) → Pexels (photo) → Pollinations (fallback).
+    Priority: HF FLUX.1-dev (AI-generated) → Pexels (photo) → Pollinations (fallback).
+    Logo is always applied — hosted via imgbb or catbox.moe.
     """
     enriched = _enrich_prompt(image_prompt)
     print(f"Enriched prompt: {enriched}")
 
     # 1. Hugging Face FLUX.1-dev
-    if HF_TOKEN and IMGBB_API_KEY:
+    if HF_TOKEN:
         try:
             print("Generating image with HF FLUX.1-dev...")
             hf_resp = requests.post(
@@ -212,11 +230,9 @@ def fetch_image_url(event_name, image_prompt):
                 },
                 timeout=180,
             )
-            print(f"HF response status: {hf_resp.status_code}, content-type: {hf_resp.headers.get('Content-Type')}")
+            print(f"HF status: {hf_resp.status_code}, content-type: {hf_resp.headers.get('Content-Type')}")
             hf_resp.raise_for_status()
-            url = _process_and_host(hf_resp.content)
-            print(f"HF FLUX.1-dev image with logo hosted at: {url}")
-            return url
+            return _process_and_host(hf_resp.content)
         except Exception as e:
             print(f"HF FLUX.1-dev error: {e} — trying Pexels")
 
@@ -232,15 +248,9 @@ def fetch_image_url(event_name, image_prompt):
             resp.raise_for_status()
             photos = resp.json().get("photos", [])
             if photos:
-                pexels_url = photos[0]["src"]["large2x"]
-                if IMGBB_API_KEY:
-                    img_resp = requests.get(pexels_url, timeout=30)
-                    img_resp.raise_for_status()
-                    url = _process_and_host(img_resp.content)
-                    print(f"Pexels image with logo hosted at: {url}")
-                    return url
-                print(f"Pexels image (no logo — imgbb key missing): {pexels_url}")
-                return pexels_url
+                img_resp = requests.get(photos[0]["src"]["large2x"], timeout=30)
+                img_resp.raise_for_status()
+                return _process_and_host(img_resp.content)
             print("Pexels: no results, falling back to Pollinations")
         except Exception as e:
             print(f"Pexels error: {e} — falling back to Pollinations")
@@ -248,15 +258,12 @@ def fetch_image_url(event_name, image_prompt):
     # 3. Pollinations fallback
     encoded = urllib.parse.quote(enriched)
     poll_url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&nologo=true&model=flux&seed={random.randint(0, 99999)}"
-    if IMGBB_API_KEY:
-        try:
-            img_resp = requests.get(poll_url, timeout=120)
-            img_resp.raise_for_status()
-            url = _process_and_host(img_resp.content)
-            print(f"Pollinations image with logo hosted at: {url}")
-            return url
-        except Exception as e:
-            print(f"Pollinations download error: {e} — using direct URL (no logo)")
+    try:
+        img_resp = requests.get(poll_url, timeout=120)
+        img_resp.raise_for_status()
+        return _process_and_host(img_resp.content)
+    except Exception as e:
+        print(f"Pollinations error: {e} — using direct URL (no logo)")
     return poll_url
 
 
