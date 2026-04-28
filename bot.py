@@ -93,9 +93,18 @@ def generate_content(event_name, status):
     """Ask Groq to generate the full post: title, caption, hashtags, and image prompt."""
     client = Groq(api_key=GROQ_API_KEY)
     prompt = (
-        f"You are a social media manager. Generate content for this event:\n"
+        f"You are a social media manager. Create an engaging post to celebrate or acknowledge this national/international day or observance:\n"
         f"Event: {event_name}\n"
         f"Status: {status}\n\n"
+        f"CRITICAL RULES — read carefully:\n"
+        f"1. This is a national/international awareness day or holiday. The company is NOT hosting it, NOT selling anything related to it, and NOT organizing any event.\n"
+        f"2. NEVER write 'join us', 'come to our', 'visit us', 'shop with us', 'find deals', 'score bargains', or ANY invitation for people to buy or attend something.\n"
+        f"3. Write ONLY as a general fun/informative shoutout recognizing the day — like wishing someone a happy holiday.\n"
+        f"4. Think of it exactly like posting 'Happy New Year!' — you are just celebrating the day, nothing more.\n\n"
+        f"GOOD example for 'National Garage Sale Day':\n"
+        f"  caption: 'Happy National Garage Sale Day! 🏡✨ Today is all about the thrill of the hunt — one person's clutter is another's treasure! Did you know garage sales have been a beloved tradition for decades? Whether you love browsing or decluttering, today celebrates the joy of giving items a second life. 🛍️♻️'\n\n"
+        f"BAD example (NEVER write like this):\n"
+        f"  caption: 'Join us for Garage Sale Day! Come find amazing deals and hidden gems at our sale!' ← WRONG, implies company is hosting\n\n"
         f"Return ONLY a valid JSON object with these exact keys:\n"
         f"  title: a short punchy headline (max 10 words)\n"
         f"  caption: warm friendly post body with emojis (max 150 words)\n"
@@ -240,12 +249,33 @@ def _apply_logo(image_bytes):
 
 def fetch_image_bytes(event_name, image_prompt):
     """Return image bytes with logo overlaid.
-    Priority: HF FLUX.1-schnell → Pexels → Pollinations.
+    Priority: Pexels → HF FLUX.1-schnell → Pollinations.
     """
     enriched = _enrich_prompt(image_prompt)
     print(f"Enriched prompt: {enriched}")
 
-    # 1. Hugging Face FLUX.1-schnell
+    # 1. Pexels — real professional photos, best quality
+    if PEXELS_API_KEY:
+        try:
+            resp = requests.get(
+                "https://api.pexels.com/v1/search",
+                headers={"Authorization": PEXELS_API_KEY},
+                params={"query": event_name, "per_page": 15, "orientation": "square"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            photos = resp.json().get("photos", [])
+            if photos:
+                photo = random.choice(photos)
+                img_resp = requests.get(photo["src"]["large2x"], timeout=30)
+                img_resp.raise_for_status()
+                print(f"Pexels image selected: {photo['url']}")
+                return _apply_logo(img_resp.content)
+            print("Pexels: no results, falling back to HF")
+        except Exception as e:
+            print(f"Pexels error: {e} — falling back to HF")
+
+    # 2. Hugging Face FLUX.1-schnell
     if HF_TOKEN:
         try:
             print("Generating image with HF FLUX.1-schnell...")
@@ -262,26 +292,7 @@ def fetch_image_bytes(event_name, image_prompt):
             print("HF FLUX.1-schnell generation successful.")
             return _apply_logo(buf.getvalue())
         except Exception as e:
-            print(f"HF FLUX.1-schnell error: {e} — trying Pexels")
-
-    # 2. Pexels
-    if PEXELS_API_KEY:
-        try:
-            resp = requests.get(
-                "https://api.pexels.com/v1/search",
-                headers={"Authorization": PEXELS_API_KEY},
-                params={"query": event_name, "per_page": 1, "orientation": "square"},
-                timeout=15,
-            )
-            resp.raise_for_status()
-            photos = resp.json().get("photos", [])
-            if photos:
-                img_resp = requests.get(photos[0]["src"]["large2x"], timeout=30)
-                img_resp.raise_for_status()
-                return _apply_logo(img_resp.content)
-            print("Pexels: no results, falling back to Pollinations")
-        except Exception as e:
-            print(f"Pexels error: {e} — falling back to Pollinations")
+            print(f"HF FLUX.1-schnell error: {e} — trying Pollinations")
 
     # 3. Pollinations
     encoded = urllib.parse.quote(enriched)
