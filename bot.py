@@ -542,10 +542,7 @@ def main():
 
         if IG_USER_ID:
             ig_caption = build_instagram_caption(title, caption, hashtags)
-            image_url = get_facebook_photo_url(photo_id)
-            if not image_url:
-                print("Could not get Facebook photo URL — falling back to hosted image.")
-                image_url = _host_image(image_bytes)
+            image_url = _host_image(image_bytes)
             print(f"Instagram image URL: {image_url}")
             ig_result = post_to_instagram(ig_caption, image_url)
             print(f"Instagram: posted successfully. Post ID: {ig_result.get('id')}")
