@@ -35,6 +35,9 @@ _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGO_DARK_PATH = os.path.join(_BASE_DIR, "logo_dark.png")
 LOGO_WHITE_PATH = os.path.join(_BASE_DIR, "logo_white.png")
 
+EVENTS_CACHE_NAME = "events_cache.csv"
+EVENTS_CACHE_PATH = os.path.join(_BASE_DIR, EVENTS_CACHE_NAME)
+
 for _p in (LOGO_DARK_PATH, LOGO_WHITE_PATH):
     print(f"Logo file {'FOUND' if os.path.exists(_p) else 'MISSING'}: {_p}")
 
@@ -56,11 +59,96 @@ STYLE_VARIANTS = [
 ]
 
 
-def fetch_events():
-    response = requests.get(SHEET_CSV_URL, timeout=15)
-    response.raise_for_status()
-    reader = csv.DictReader(io.StringIO(response.text))
-    return list(reader)
+def _parse_events_csv(text):
+    return list(csv.DictReader(io.StringIO(text)))
+
+
+def _read_cached_csv():
+    """Return the last known-good CSV text, or None if there is no usable cache."""
+    if not os.path.exists(EVENTS_CACHE_PATH):
+        return None
+    try:
+        with open(EVENTS_CACHE_PATH, "r", encoding="utf-8") as f:
+            text = f.read()
+    except OSError as e:
+        print(f"Could not read cache file: {e}")
+        return None
+    if not text.strip():
+        return None
+    return text
+
+
+def _commit_cache_to_repo(text):
+    """Push the cache file back to the repo so the next Actions checkout has it."""
+    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{EVENTS_CACHE_NAME}"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+    }
+    payload = {
+        "message": "bot: update cached events sheet",
+        "content": base64.b64encode(text.encode("utf-8")).decode("utf-8"),
+    }
+    existing = requests.get(api_url, headers=headers, timeout=30)
+    if existing.status_code == 200:
+        payload["sha"] = existing.json()["sha"]
+    elif existing.status_code != 404:
+        existing.raise_for_status()
+    resp = requests.put(api_url, headers=headers, json=payload, timeout=30)
+    resp.raise_for_status()
+    print("Cached events sheet committed to repo")
+
+
+def _save_cache(text):
+    previous = _read_cached_csv()
+    if previous == text:
+        return
+    try:
+        with open(EVENTS_CACHE_PATH, "w", encoding="utf-8") as f:
+            f.write(text)
+    except OSError as e:
+        print(f"Could not write cache file: {e}")
+        return
+    if GITHUB_TOKEN and GITHUB_REPO:
+        try:
+            _commit_cache_to_repo(text)
+        except Exception as e:
+            print(f"Could not commit cache to repo ({e}) — local cache still written")
+
+
+def fetch_events(retries=4, delay=5):
+    """Download the events sheet as CSV, retrying on transient network errors.
+
+    Every successful fetch is cached; if the sheet is unreachable we fall back to
+    the last known-good copy rather than failing the run.
+    """
+    last_error = None
+    for attempt in range(retries):
+        try:
+            response = requests.get(SHEET_CSV_URL, timeout=(10, 60))
+            response.raise_for_status()
+            events = _parse_events_csv(response.text)
+            if events:
+                _save_cache(response.text)
+            else:
+                print("Sheet returned no rows — not overwriting cache")
+            return events
+        except requests.RequestException as e:
+            last_error = e
+            print(f"Sheet fetch attempt {attempt + 1}/{retries} failed: {e}")
+            if attempt < retries - 1:
+                wait = delay * (2 ** attempt)
+                print(f"Waiting {wait}s before retry...")
+                time.sleep(wait)
+
+    cached = _read_cached_csv()
+    if cached is not None:
+        print(f"Sheet unreachable — falling back to cached copy ({EVENTS_CACHE_NAME})")
+        return _parse_events_csv(cached)
+
+    raise RuntimeError(
+        f"Could not fetch events sheet after {retries} attempts and no cache is available"
+    ) from last_error
 
 
 def parse_date(date_str):

@@ -8,6 +8,8 @@ on:
 jobs:
   post:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write    # bot commits generated images and events_cache.csv back to the repo
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
